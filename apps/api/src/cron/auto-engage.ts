@@ -1,10 +1,9 @@
-import Anthropic from '@anthropic-ai/sdk';
+import OpenAI from 'openai';
 import type { Core } from '@strapi/strapi';
 
 const BATCH_SIZE = parseInt(process.env.CRON_POSTS_PER_RUN ?? '5', 10);
 const MAX_IMAGES = 5;
-
-// ── Tiptap node types ────────────────────────────────────────────────────────
+const MODEL = process.env.OPENAI_AUTO_ENGAGE_MODEL ?? 'gpt-4.1-mini';
 
 interface TiptapNode {
   type?: string;
@@ -13,41 +12,42 @@ interface TiptapNode {
   content?: TiptapNode[];
 }
 
-type AnthropicContentBlock =
-  | Anthropic.TextBlockParam
-  | Anthropic.ImageBlockParam;
+type OpenAIInputContent =
+  | { type: 'input_text'; text: string }
+  | { type: 'input_image'; image_url: string; detail: 'auto' };
 
-/**
- * Recursively walk Tiptap JSON and collect text + image content blocks.
- * Videos are represented as "[video]" text since Claude cannot process them.
- */
+function collapseWhitespace(value: string): string {
+  return value.replace(/\s+/g, ' ').trim();
+}
+
+function stripHtml(value: string): string {
+  return collapseWhitespace(value.replace(/<[^>]+>/g, ' '));
+}
+
 function buildContentBlocks(
   node: TiptapNode,
   imageCount: { value: number }
-): AnthropicContentBlock[] {
-  const blocks: AnthropicContentBlock[] = [];
+): OpenAIInputContent[] {
+  const blocks: OpenAIInputContent[] = [];
 
   if (!node) return blocks;
 
   if (node.type === 'text' && node.text) {
-    blocks.push({ type: 'text', text: node.text });
+    blocks.push({ type: 'input_text', text: node.text });
     return blocks;
   }
 
   if (node.type === 'image' && imageCount.value < MAX_IMAGES) {
     const src = node.attrs?.src as string | undefined;
     if (src?.startsWith('https://')) {
-      blocks.push({
-        type: 'image',
-        source: { type: 'url', url: src },
-      });
+      blocks.push({ type: 'input_image', image_url: src, detail: 'auto' });
       imageCount.value++;
     }
     return blocks;
   }
 
   if (node.type === 'video') {
-    blocks.push({ type: 'text', text: '[video]' });
+    blocks.push({ type: 'input_text', text: '[video]' });
     return blocks;
   }
 
@@ -60,24 +60,40 @@ function buildContentBlocks(
   return blocks;
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+function extractPlainText(node: TiptapNode | null | undefined): string {
+  if (!node) return '';
+
+  if (node.type === 'text' && node.text) {
+    return node.text;
+  }
+
+  if (node.type === 'video') {
+    return ' [video] ';
+  }
+
+  const parts = (node.content ?? [])
+    .map((child) => extractPlainText(child))
+    .filter(Boolean);
+
+  if (!parts.length) return '';
+
+  const joined = parts.join(node.type === 'paragraph' || node.type === 'heading' ? '\n' : ' ');
+  return collapseWhitespace(joined);
+}
 
 function pickRandom<T>(arr: T[]): T {
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
-// ── Main ─────────────────────────────────────────────────────────────────────
-
 export async function autoEngage(strapi: Core.Strapi) {
   const log = (msg: string) => console.log(`[cron:autoEngage] ${msg}`);
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = process.env.OPENAI_API_KEY;
 
   if (!apiKey) {
-    log('ANTHROPIC_API_KEY not set — skipping.');
+    log('OPENAI_API_KEY not set - skipping.');
     return;
   }
 
-  // 1. Load seeded users
   const seededUsers = (await strapi.db
     .query('plugin::users-permissions.user')
     .findMany({
@@ -86,11 +102,10 @@ export async function autoEngage(strapi: Core.Strapi) {
     })) as Array<{ id: number; documentId: string; username: string; email: string }>;
 
   if (!seededUsers.length) {
-    log('No seeded users (isSeeded=true) found — skipping.');
+    log('No seeded users (isSeeded=true) found - skipping.');
     return;
   }
 
-  // 2. Cursor-based offset
   const store = strapi.store({ type: 'core', name: 'cron', key: 'autoEngageOffset' });
   const currentOffset = ((await store.get({})) as number) ?? 0;
 
@@ -111,18 +126,18 @@ export async function autoEngage(strapi: Core.Strapi) {
 
   const nextOffset = posts.length < BATCH_SIZE ? 0 : currentOffset + BATCH_SIZE;
   await store.set({ value: nextOffset });
-  log(`Processing ${posts.length} posts (offset ${currentOffset} → ${nextOffset})`);
+  log(`Processing ${posts.length} posts (offset ${currentOffset} -> ${nextOffset})`);
 
   if (!posts.length) {
     log('No published posts found.');
     return;
   }
 
-  const anthropic = new Anthropic({ apiKey });
+  const openai = new OpenAI({ apiKey });
 
   for (const post of posts) {
     try {
-      await engagePost(strapi, anthropic, post, seededUsers, log);
+      await engagePost(strapi, openai, post, seededUsers, log);
     } catch (err) {
       log(`Error on post ${post.documentId}: ${err}`);
     }
@@ -131,7 +146,7 @@ export async function autoEngage(strapi: Core.Strapi) {
 
 async function engagePost(
   strapi: Core.Strapi,
-  anthropic: Anthropic,
+  openai: OpenAI,
   post: {
     id: number;
     documentId: string;
@@ -143,31 +158,22 @@ async function engagePost(
   seededUsers: Array<{ id: number; documentId: string; username: string; email: string }>,
   log: (msg: string) => void
 ) {
-  // Pick actor ≠ post author
   const candidates = seededUsers.filter((u) => u.id !== post.author?.id);
   if (!candidates.length) return;
   const actor = pickRandom(candidates);
 
-  // Fetch existing comments for branching decision
   const existingComments = (await strapi.db.query('api::comment.comment').findMany({
     where: { targetType: 'post', targetDocumentId: post.documentId },
     limit: 50,
   })) as Array<{ id: number; documentId: string; authorName: string; content: string }>;
 
-  const shouldReply =
-    existingComments.length > 0 && Math.random() < 0.5;
-
+  const shouldReply = existingComments.length > 0 && Math.random() < 0.5;
   const parentComment = shouldReply ? pickRandom(existingComments) : null;
 
-  // Generate comment via Anthropic
-  const generatedComment = await generateComment(
-    anthropic,
-    post,
-    parentComment
-  );
+  const generatedComment = await generateComment(openai, post, parentComment);
 
   if (!generatedComment) {
-    log(`Skipped comment for post ${post.documentId} — empty AI response`);
+    log(`Skipped comment for post ${post.documentId} - empty AI response`);
   } else {
     const commentData: Record<string, unknown> = {
       authorName: actor.username,
@@ -182,12 +188,9 @@ async function engagePost(
     }
 
     await strapi.db.query('api::comment.comment').create({ data: commentData });
-    log(
-      `Commented on post ${post.documentId} as "${actor.username}"${parentComment ? ' (reply)' : ''}`
-    );
+    log(`Commented on post ${post.documentId} as "${actor.username}"${parentComment ? ' (reply)' : ''}`);
   }
 
-  // Auto like
   const alreadyLiked = await strapi.db.query('api::interaction.interaction').findOne({
     where: {
       actionType: 'like',
@@ -209,18 +212,15 @@ async function engagePost(
     log(`Liked post ${post.documentId} as "${actor.username}"`);
   }
 
-  // Auto follow author
   if (post.author && post.author.id !== actor.id) {
-    const alreadyFollowed = await strapi.db
-      .query('api::interaction.interaction')
-      .findOne({
-        where: {
-          actionType: 'follow',
-          targetType: 'user',
-          targetDocumentId: post.author.documentId,
-          user: actor.id,
-        },
-      });
+    const alreadyFollowed = await strapi.db.query('api::interaction.interaction').findOne({
+      where: {
+        actionType: 'follow',
+        targetType: 'user',
+        targetDocumentId: post.author.documentId,
+        user: actor.id,
+      },
+    });
 
     if (!alreadyFollowed) {
       await strapi.db.query('api::interaction.interaction').create({
@@ -231,15 +231,13 @@ async function engagePost(
           user: actor.id,
         },
       });
-      log(
-        `Followed user "${post.author.username}" as "${actor.username}"`
-      );
+      log(`Followed user "${post.author.username}" as "${actor.username}"`);
     }
   }
 }
 
 async function generateComment(
-  anthropic: Anthropic,
+  openai: OpenAI,
   post: {
     title: string;
     content: TiptapNode;
@@ -247,64 +245,85 @@ async function generateComment(
   },
   parentComment: { authorName: string; content: string } | null
 ): Promise<string | null> {
-  // Build content blocks from richtext
   const imageCount = { value: 0 };
   const richTextBlocks = buildContentBlocks(post.content ?? {}, imageCount);
+  const plainPostText = extractPlainText(post.content);
   const hasVideoInContent = richTextBlocks.some(
-    (b) => b.type === 'text' && (b as Anthropic.TextBlockParam).text === '[video]'
+    (b) => b.type === 'input_text' && b.text === '[video]'
   );
 
-  // Append post.images media field (if slots remain)
   for (const img of post.images ?? []) {
     if (imageCount.value >= MAX_IMAGES) break;
     if (img.url?.startsWith('https://')) {
-      richTextBlocks.push({
-        type: 'image',
-        source: { type: 'url', url: img.url },
-      });
+      richTextBlocks.push({ type: 'input_image', image_url: img.url, detail: 'auto' });
       imageCount.value++;
     }
   }
 
   const hasImages = imageCount.value > 0;
   const hasVideo = hasVideoInContent;
-  // Constraint injected into prompts when there is no visual media
-  const noMediaConstraint =
-    !hasImages && !hasVideo
-      ? `Bài viết này CHỈ có nội dung text, KHÔNG có ảnh hay video. Tuyệt đối không được nhắc đến ảnh hay video trong bình luận. `
-      : '';
+  const hasBodyText = plainPostText.length > 0;
+  const titleOnly = !hasBodyText && !hasImages && !hasVideo;
+  const sparseInput = !hasBodyText && (hasImages || hasVideo);
+  const sanitizedParentComment = parentComment
+    ? {
+        authorName: collapseWhitespace(parentComment.authorName),
+        content: stripHtml(parentComment.content),
+      }
+    : null;
 
-  let userContent: AnthropicContentBlock[];
+  const systemPrompt =
+    'Ban dang viet comment gia lap cho mang xa hoi bang tieng Viet. ' +
+    'Hay viet nhu nguoi dung that: ngan, tu nhien, khong formal, khong sao rong, khong emoji. ' +
+    'Chi duoc dung thong tin that su co trong input. Khong bia them boi canh, dia diem, thoi gian, nhan vat, trai nghiem hay chi tiet khong thay ro. ' +
+    'Neu input it thong tin thi phai viet than trong va ngan hon. ' +
+    'Duoc phep viet nhu mot nguoi xem that tung di qua, tung ghe, tung biet ve dia diem/chu de do, nhung chi noi rat ngan gon va doi thuong. ' +
+    'Neu nhin thay ro anh thi duoc khen nhung thu truc quan nhu bo cuc, mau sac, anh sang, goc chup, khong khi, do net, cam giac de xem. ' +
+    'Khong duoc tu mot anh ma suy dien ra ca mot hanh trinh, mot qua trinh, mot cau chuyen lon, hay y nghia qua muc.';
 
-  if (parentComment) {
-    // Reply prompt — no need to include full post content
+  const inputConstraint = titleOnly
+    ? 'Input gan nhu chi co tieu de. Hay viet mot nhan xet rat ngan, an toan, khong bia noi dung cu the cua bai.'
+    : !hasImages && !hasVideo
+      ? 'Bai viet nay khong co anh hoac video. Khong duoc nhac den anh/video.'
+      : sparseInput
+        ? 'Input hien chi co tieu de va/hoac hinh anh, gan nhu khong co body text. Chi duoc phan ung theo nhung gi thay ro tu tieu de/hinh. Co the noi kieu "da tung ghe", "co biet cho nay", hoac khen bo cuc/anh dep neu nhin thay ro, nhung khong duoc suy dien thanh ca qua trinh hay cau chuyen phia sau.'
+        : 'Neu anh khong du ro de ket luan, hay giu nhan xet o muc chung chung thay vi doan.';
+
+  let userContent: OpenAIInputContent[];
+
+  if (sanitizedParentComment) {
     userContent = [
       {
-        type: 'text',
+        type: 'input_text',
         text:
-          `Bạn là một người dùng mạng xã hội Việt Nam bình thường, đang đọc bình luận này trong bài "${post.title}":\n\n` +
-          `"${parentComment.content}" — ${parentComment.authorName}\n\n` +
-          `Viết 1 phản hồi bằng tiếng Việt thông thường, kiểu người thật nhắn tin trên mạng. ` +
-          `Ngắn gọn, tự nhiên, đôi khi có thể dùng từ lóng hoặc cách nói tắt. ` +
-          `Không dùng emoji, không dùng ngôn ngữ formal, không sáo rỗng. ` +
-          `Độ dài ngẫu nhiên 1-2 câu. Chỉ trả về nội dung phản hồi, không thêm gì khác.`,
+          `Tieu de bai viet: "${post.title}"\n` +
+          `Binh luan can tra loi: "${sanitizedParentComment.content}" - ${sanitizedParentComment.authorName}\n\n` +
+          `Rang buoc: ${inputConstraint}\n` +
+          'Viet reply dai 1-3 cau, kieu nguoi dung that dang trao doi tren mang. ' +
+          'Neu input mo ho thi giu giong vua phai. Co the noi kieu "minh cung tung ghe", "nhin bo cuc dep", "anh len mau on" neu hop input. ' +
+          'Khong tung ho, khong nang tam thanh "rat sau sac", "dam tinh lich su", "qua y nghia", va khong bien mot hinh anh thanh ca mot qua trinh neu khong co can cu. ' +
+          'Khong dong vai tac gia bai viet. Khong lap lai nguyen y nguoi truoc. Chi tra ve noi dung comment.',
       },
     ];
   } else {
-    // Top-level comment prompt with full multimodal content
-    const intro: AnthropicContentBlock = {
-      type: 'text',
-      text: `Bạn là một người đọc (KHÔNG phải tác giả) vừa đọc xong bài viết của người khác: "${post.title}"\n\nNội dung bài viết:`,
+    const intro: OpenAIInputContent = {
+      type: 'input_text',
+      text:
+        `Tieu de bai viet: "${post.title}"\n` +
+        `Text trong bai: ${hasBodyText ? `"${plainPostText.slice(0, 1200)}"` : '[khong co hoac rat it]'}\n` +
+        'Duoi day la noi dung va anh dinh kem cua bai:',
     };
 
-    const outro: AnthropicContentBlock = {
-      type: 'text',
+    const outro: OpenAIInputContent = {
+      type: 'input_text',
       text:
-        `\n\n${noMediaConstraint}` +
-        `Viết 1 bình luận với tư cách người đọc, bày tỏ cảm nhận/ý kiến về bài viết của người khác. ` +
-        `KHÔNG được viết như thể bạn là tác giả (không dùng "mình sẽ cố gắng", "cảm ơn các bạn đã xem"...). ` +
-        `Dùng tiếng Việt thông thường, kiểu người thật nhắn tin trên mạng. Tự nhiên, không sáo rỗng, không formal. ` +
-        `Đôi khi có thể dùng từ lóng hoặc cách nói tắt. Độ dài ngẫu nhiên 1-4 câu. Không dùng emoji. Chỉ trả về nội dung bình luận.`,
+        `\n\nRang buoc: ${inputConstraint}\n` +
+        'Viet 1 comment voi tu cach nguoi doc, khong phai tac gia. ' +
+        'Comment phai dai 1-3 cau. Neu du lieu it thi van giu 1-3 cau nhung phan ung vua phai, khong phong dai. ' +
+        'Co the viet theo kieu da tung ghe qua, tung biet den noi nay, hoac khen nhung diem nhin thay ro tu anh nhu bo cuc, anh sang, mau, goc chup. ' +
+        'Khong duoc tu nhay thanh khen lon, suy ton, gan chat "lich su", "sau sac", "day thong diep", hoac noi ve ca mot hanh trinh, mot qua trinh neu input khong du can cu. ' +
+        'Khong duoc viet kieu ket bai cua tac gia nhu "cam on moi nguoi", "minh se co gang". ' +
+        'Khong dung emoji. Chi tra ve noi dung comment.',
     };
 
     userContent =
@@ -312,27 +331,30 @@ async function generateComment(
         ? [intro, ...richTextBlocks, outro]
         : [
             {
-              type: 'text',
+              type: 'input_text',
               text:
-                `Bạn là một người đọc (KHÔNG phải tác giả), vừa đọc bài của người khác: "${post.title}". ` +
-                `${noMediaConstraint}` +
-                `Viết 1 bình luận bày tỏ cảm nhận của người đọc. ` +
-                `KHÔNG viết như thể bạn là tác giả (không dùng "mình sẽ cố gắng", "cảm ơn các bạn đã xem"...). ` +
-                `Dùng tiếng Việt thông thường, tự nhiên, không sáo rỗng. Đôi khi có thể dùng từ lóng hoặc cách nói tắt. ` +
-                `Độ dài ngẫu nhiên 1-4 câu. Không dùng emoji. Chỉ trả về nội dung bình luận.`,
+                `Tieu de bai viet: "${post.title}". ` +
+                `Text trong bai: ${hasBodyText ? `"${plainPostText.slice(0, 1200)}". ` : ''}` +
+                `Rang buoc: ${inputConstraint} ` +
+                'Viet 1 comment dai 1-3 cau voi tu cach nguoi doc, khong phai tac gia. ' +
+                'Neu input mo ho thi chi nen nhan xet muc do vua phai. Co the nhac kieu da tung ghe, tung biet, hoac khen anh dep/bo cuc dep neu input cho phep. ' +
+                'Khong tung ho, khong gan y nghia lon, va khong bien mot hinh anh thanh ca mot qua trinh neu khong co can cu. ' +
+                'Khong bia them chi tiet ngoai input. Khong dung emoji. Chi tra ve noi dung comment.',
             },
           ];
   }
 
-  const response = await anthropic.messages.create({
-    model: 'claude-haiku-4-5-20251001',
-    max_tokens: 200,
-    messages: [{ role: 'user', content: userContent }],
+  const response = await openai.responses.create({
+    model: MODEL,
+    instructions: systemPrompt,
+    input: [
+      {
+        role: 'user',
+        content: userContent,
+      },
+    ],
+    max_output_tokens: 120,
   });
 
-  const block = response.content[0];
-  if (block?.type === 'text') {
-    return block.text.trim() || null;
-  }
-  return null;
+  return response.output_text.trim() || null;
 }
