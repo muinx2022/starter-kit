@@ -205,6 +205,7 @@ export type AiCommentCronSettings = AiAutomationJobStatus & {
   commentsPerRun: number;
   allowReplies: boolean;
   commentPrompt: string;
+  replyPrompt: string;
 };
 
 export type AiProviderSettings = {

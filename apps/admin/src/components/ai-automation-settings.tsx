@@ -837,6 +837,16 @@ export function AiAutomationSettingsScreen() {
               />
             </div>
 
+            <div className="space-y-2">
+              <Label htmlFor="reply-prompt">Reply prompt</Label>
+              <Textarea
+                id="reply-prompt"
+                rows={4}
+                value={settings.comments.replyPrompt}
+                onChange={(event) => updateComments({ replyPrompt: event.target.value })}
+              />
+            </div>
+
             <div className="rounded-lg border bg-muted/30 p-3 text-sm">
               <p>Scope: all published posts</p>
               <p>Actor source: random seeded user</p>

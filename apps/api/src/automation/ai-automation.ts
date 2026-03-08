@@ -54,6 +54,7 @@ export type AiCommentCronSettings = AiAutomationJobStatus & {
   commentsPerRun: number;
   allowReplies: boolean;
   commentPrompt: string;
+  replyPrompt: string;
 };
 
 export type AiProviderSettings = {
@@ -194,6 +195,8 @@ export function getDefaultAiAutomationSettings(): AiAutomationSettings {
       allowReplies: true,
       commentPrompt:
         'Hay viet 1 comment ngan, tu nhien, giong nguoi dung Viet Nam that. Binh dan, de doc, phu hop voi noi dung bai viet.',
+      replyPrompt:
+        'Hay viet 1 comment reply ngan, tu nhien, giong nguoi dung Viet Nam that. Van phong doi thuong, co lien quan truc tiep toi comment dang duoc reply.',
       ...getDefaultJobStatus(),
     },
     providers: {
@@ -509,6 +512,8 @@ function normalizeSettings(input: Partial<AiAutomationSettings> | null | undefin
   merged.comments.allowReplies = Boolean(merged.comments.allowReplies);
   merged.comments.commentPrompt =
     String(merged.comments.commentPrompt ?? defaults.comments.commentPrompt).trim() || defaults.comments.commentPrompt;
+  merged.comments.replyPrompt =
+    String(merged.comments.replyPrompt ?? defaults.comments.replyPrompt).trim() || defaults.comments.replyPrompt;
   merged.comments.lastRunAt = merged.comments.lastRunAt ? new Date(merged.comments.lastRunAt).toISOString() : null;
   merged.comments.lastSuccessAt = merged.comments.lastSuccessAt ? new Date(merged.comments.lastSuccessAt).toISOString() : null;
   merged.comments.lastError = merged.comments.lastError ? String(merged.comments.lastError) : null;
@@ -624,6 +629,9 @@ export async function updateAiAutomationSettings(
   }
   if (!next.comments.commentPrompt) {
     throw new Error('Comment prompt is required');
+  }
+  if (!next.comments.replyPrompt) {
+    throw new Error('Reply prompt is required');
   }
   if (next.providers.openai.enabled && next.providers.openai.models.length === 0) {
     throw new Error('OpenAI requires at least one selected model');
@@ -1460,10 +1468,11 @@ async function generateCommentForPost(
   selected: SelectedModel,
   post: PostEntry,
   replyTarget: CommentEntry | null,
-  commentPrompt: string
+  commentPrompt: string,
+  replyPrompt: string
 ) {
   const instructions =
-    `${commentPrompt}\n` +
+    `${replyTarget ? replyPrompt : commentPrompt}\n` +
     'Tra ve duy nhat noi dung comment, khong markdown. Neu khong that su can thiet thi khong dung emoji.';
 
   const prompt = replyTarget
@@ -1487,13 +1496,14 @@ async function generateCommentForPostWithFallback(
   modelPool: SelectedModel[],
   post: PostEntry,
   replyTarget: CommentEntry | null,
-  commentPrompt: string
+  commentPrompt: string,
+  replyPrompt: string
 ) {
   const errors: string[] = [];
 
   for (const selectedModel of shuffle(modelPool)) {
     try {
-      const generated = await generateCommentForPost(selectedModel, post, replyTarget, commentPrompt);
+      const generated = await generateCommentForPost(selectedModel, post, replyTarget, commentPrompt, replyPrompt);
       return { selectedModel, generated, errors };
     } catch (error) {
       errors.push(
@@ -1546,7 +1556,13 @@ export async function runCommentAutomation(strapi: Core.Strapi): Promise<AiAutom
           const canReply = settings.comments.allowReplies && existingComments.length > 0;
           const replyTarget = canReply && Math.random() < 0.5 ? pickRandom(existingComments) : null;
           const selectedModel = pickRandom(modelPool);
-          const generated = await generateCommentForPost(selectedModel, post, replyTarget, settings.comments.commentPrompt);
+          const generated = await generateCommentForPost(
+            selectedModel,
+            post,
+            replyTarget,
+            settings.comments.commentPrompt,
+            settings.comments.replyPrompt
+          );
           if (!generated) {
             result.skipped += 1;
             continue;
@@ -1605,7 +1621,13 @@ export async function testCommentAutomation(strapi: Core.Strapi): Promise<AiComm
   const canReply = settings.comments.allowReplies && existingComments.length > 0;
   const replyTarget = canReply && Math.random() < 0.5 ? pickRandom(existingComments) : null;
   const selectedModel = pickRandom(modelPool);
-  const preview = await generateCommentForPost(selectedModel, post, replyTarget, settings.comments.commentPrompt);
+  const preview = await generateCommentForPost(
+    selectedModel,
+    post,
+    replyTarget,
+    settings.comments.commentPrompt,
+    settings.comments.replyPrompt
+  );
   if (!preview) {
     throw new Error('AI returned empty comment preview');
   }
