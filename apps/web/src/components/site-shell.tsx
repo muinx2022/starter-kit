@@ -49,7 +49,7 @@ export async function SiteShell({ children }: { children: ReactNode }) {
         <div className="grid grid-cols-1 gap-6 md:grid-cols-12">
           <main className="space-y-4 md:col-span-8">{children}</main>
 
-          <aside className="hidden md:col-span-4 md:flex md:flex-col">
+          <aside className="hidden md:col-span-4 md:block md:self-start md:sticky md:top-20 md:h-[calc(100vh-5rem)]">
             <RightSidebar categories={categories} footerPages={footerPages} />
           </aside>
         </div>
