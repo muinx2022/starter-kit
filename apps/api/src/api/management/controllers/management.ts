@@ -535,7 +535,7 @@ export default {
 
   async listReports(ctx: any) {
     const page = Math.max(1, Number(ctx.query?.page ?? 1) || 1);
-    const pageSize = Math.min(100, Math.max(1, Number(ctx.query?.pageSize ?? 20) || 20));
+    const pageSize = Math.min(10, Math.max(1, Number(ctx.query?.pageSize ?? 10) || 10));
     const status = String(ctx.query?.status ?? '').trim();
     const targetType = String(ctx.query?.targetType ?? '').trim();
 

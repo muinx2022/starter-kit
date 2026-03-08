@@ -179,7 +179,8 @@ export default factories.createCoreService(UID, ({ strapi }) => ({
   },
 
   async listForAdmin(query: any) {
-    const { page, pageSize } = toPagination(query);
+    const { page, pageSize: requestedPageSize } = toPagination(query);
+    const pageSize = Math.min(10, requestedPageSize);
     const sort = query?.sort ?? 'updatedAt:desc';
     const keyword = String(query?.q ?? '').trim();
     const keywordFilters = keyword

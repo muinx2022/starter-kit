@@ -78,7 +78,7 @@ const WEB_URL = process.env.NEXT_PUBLIC_WEB_URL ?? "";
 
 export function ReportsManager() {
   const [rows, setRows] = useState<ReportItem[]>([]);
-  const [pagination, setPagination] = useState<PaginationMeta>({ page: 1, pageSize: 100, pageCount: 1, total: 0 });
+  const [pagination, setPagination] = useState<PaginationMeta>({ page: 1, pageSize: 10, pageCount: 1, total: 0 });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
@@ -91,7 +91,7 @@ export function ReportsManager() {
     setLoading(true);
     setError(null);
     try {
-      const result = await listReports(page, 100, { status: statusFilter, targetType: targetTypeFilter });
+      const result = await listReports(page, 10, { status: statusFilter, targetType: targetTypeFilter });
       setRows(result.data);
       setPagination(result.pagination);
     } catch (err) {
