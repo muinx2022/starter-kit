@@ -39,7 +39,7 @@ export async function LeftSidebar({ categories: categoriesProp }: LeftSidebarPro
     <nav className="flex flex-col gap-1">
       <Link
         href="/"
-        className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm text-gray-700 transition-colors hover:bg-gray-100 hover:text-gray-900"
+        className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm text-gray-700 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:text-gray-300 dark:hover:bg-gray-700 dark:hover:text-gray-100"
       >
         <span className="flex h-6 w-6 items-center justify-center rounded-md bg-gray-500 text-white">
           <Home className="h-3.5 w-3.5" />
@@ -52,7 +52,7 @@ export async function LeftSidebar({ categories: categoriesProp }: LeftSidebarPro
           <Link
             key={category.documentId}
             href={`/c/${category.slug}`}
-            className="group flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm text-gray-700 transition-colors hover:bg-gray-100 hover:text-gray-900"
+            className="group flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm text-gray-700 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:text-gray-300 dark:hover:bg-gray-700 dark:hover:text-gray-100"
           >
             <span
               className={`flex h-6 w-6 items-center justify-center rounded-md text-xs font-semibold text-white ${getColorBySlug(category.slug)}`}

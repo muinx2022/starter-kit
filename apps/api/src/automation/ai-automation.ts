@@ -1003,7 +1003,14 @@ async function generateStructuredContent(
   });
 
   const jsonCandidate = raw.includes('{') ? raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1) : raw;
-  const parsed = JSON.parse(jsonCandidate) as Partial<GeneratedContentPayload>;
+  let parsed: Partial<GeneratedContentPayload>;
+  try {
+    parsed = JSON.parse(jsonCandidate) as Partial<GeneratedContentPayload>;
+  } catch (error) {
+    throw new Error(
+      `AI returned invalid JSON: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
   const title = collapseWhitespace(String(parsed.title ?? ''));
   const excerpt = collapseWhitespace(String(parsed.excerpt ?? ''));
   const bodyText = collapseWhitespace(String(parsed.bodyText ?? ''));
@@ -1040,19 +1047,26 @@ async function generateStructuredContentWithFallback(
   scenario: string
 ) {
   const errors: string[] = [];
+  const attempts = Math.min(3, Math.max(1, modelPool.length > 0 ? 3 : 1));
+  const shuffled = shuffle(modelPool);
 
-  for (const selectedModel of shuffle(modelPool)) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const selectedModel = shuffled[attempt % shuffled.length];
     try {
       const generated = await generateStructuredContent(selectedModel, prompt, category, scenario);
       return { selectedModel, generated, errors };
     } catch (error) {
       errors.push(
-        `${selectedModel.provider}/${selectedModel.model}: ${error instanceof Error ? error.message : String(error)}`
+        `attempt ${attempt + 1}/${attempts} ${selectedModel.provider}/${selectedModel.model}: ${
+          error instanceof Error ? error.message : String(error)
+        }`
       );
     }
   }
 
-  throw new Error(errors[0] ?? 'Unable to generate content with any enabled model');
+  throw new Error(
+    errors[errors.length - 1] ?? `Unable to generate content after ${attempts} attempts`
+  );
 }
 
 async function searchGoogleImages(
@@ -1352,10 +1366,19 @@ export async function runContentAutomation(strapi: Core.Strapi): Promise<AiAutom
         try {
           const author = pickRandom(users);
           const category = categories.length > 0 ? pickRandom(categories) : GENERIC_CONTENT_CATEGORY;
-          const selectedModel = pickRandom(modelPool);
           const scenarios = parseScenarioPrompt(settings.content.scenarioPrompt);
           const scenario = pickScenario(scenarios, settings.content.lastScenario);
-          const generated = await generateStructuredContent(selectedModel, settings.content.contentPrompt, category, scenario);
+          const {
+            selectedModel,
+            generated,
+            errors: generationErrors,
+          } = await generateStructuredContentWithFallback(
+            modelPool,
+            settings.content.contentPrompt,
+            category,
+            scenario
+          );
+          result.errors.push(...generationErrors);
           const slugBase = slugify(generated.title) || `ai-post-${Date.now()}`;
           let uploaded: UploadResult[] = [];
 
@@ -1570,19 +1593,26 @@ async function generateCommentForPostWithFallback(
   replyPrompt: string
 ) {
   const errors: string[] = [];
+  const attempts = Math.min(3, Math.max(1, modelPool.length > 0 ? 3 : 1));
+  const shuffled = shuffle(modelPool);
 
-  for (const selectedModel of shuffle(modelPool)) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const selectedModel = shuffled[attempt % shuffled.length];
     try {
       const generated = await generateCommentForPost(selectedModel, post, replyTarget, commentPrompt, replyPrompt);
       return { selectedModel, generated, errors };
     } catch (error) {
       errors.push(
-        `${selectedModel.provider}/${selectedModel.model}: ${error instanceof Error ? error.message : String(error)}`
+        `attempt ${attempt + 1}/${attempts} ${selectedModel.provider}/${selectedModel.model}: ${
+          error instanceof Error ? error.message : String(error)
+        }`
       );
     }
   }
 
-  throw new Error(errors[0] ?? 'Unable to generate comment with any enabled model');
+  throw new Error(
+    errors[errors.length - 1] ?? `Unable to generate comment after ${attempts} attempts`
+  );
 }
 
 export async function runCommentAutomation(strapi: Core.Strapi): Promise<AiAutomationRunResult> {
@@ -1625,14 +1655,17 @@ export async function runCommentAutomation(strapi: Core.Strapi): Promise<AiAutom
           })) as CommentEntry[];
           const canReply = settings.comments.allowReplies && existingComments.length > 0;
           const replyTarget = canReply && Math.random() < 0.5 ? pickRandom(existingComments) : null;
-          const selectedModel = pickRandom(modelPool);
-          const generated = await generateCommentForPost(
-            selectedModel,
+          const {
+            generated,
+            errors: generationErrors,
+          } = await generateCommentForPostWithFallback(
+            modelPool,
             post,
             replyTarget,
             settings.comments.commentPrompt,
             settings.comments.replyPrompt
           );
+          result.errors.push(...generationErrors);
           if (!generated) {
             result.skipped += 1;
             continue;

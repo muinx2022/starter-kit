@@ -103,7 +103,7 @@ export default async function PostPage({ params }: PostPageProps) {
   const tags = post.tags ?? [];
 
   return (
-    <article className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+    <article className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden dark:bg-gray-800 dark:border-gray-700">
       <div className="px-6 pt-5 pb-5">
 
         {/* 1. Categories */}
@@ -111,10 +111,10 @@ export default async function PostPage({ params }: PostPageProps) {
           <div className="flex flex-wrap items-center gap-1 text-xs text-gray-500 mb-3">
             {categories.map((cat, i) => (
               <span key={cat.documentId} className="flex items-center gap-1">
-                {i > 0 && <span className="text-gray-300">·</span>}
+                {i > 0 && <span className="text-gray-300 dark:text-gray-600">·</span>}
                 <Link
                   href={`/c/${cat.slug}`}
-                  className="hover:text-gray-700 hover:underline transition-colors font-medium"
+                  className="hover:text-gray-700 hover:underline transition-colors font-medium dark:hover:text-gray-300"
                 >
                   {cat.name}
                 </Link>
@@ -124,7 +124,7 @@ export default async function PostPage({ params }: PostPageProps) {
         )}
 
         {/* 2. Title */}
-        <h1 className="text-2xl font-bold text-gray-900 leading-snug">{post.title}</h1>
+        <h1 className="text-2xl font-bold text-gray-900 leading-snug dark:text-gray-100">{post.title}</h1>
 
         {/* 3. Author + time */}
         <div className="flex items-center gap-2 mt-3">
@@ -135,31 +135,31 @@ export default async function PostPage({ params }: PostPageProps) {
                 alt={post.author?.username ?? "User avatar"}
                 width={32}
                 height={32}
-                className="w-8 h-8 rounded-full object-cover bg-gray-300"
+                className="w-8 h-8 rounded-full object-cover bg-gray-300 dark:bg-gray-600"
                 unoptimized
               />
             ) : (
-              <div className="w-8 h-8 rounded-full bg-gray-300 flex items-center justify-center text-gray-600 font-bold text-xs">
+              <div className="w-8 h-8 rounded-full bg-gray-300 flex items-center justify-center text-gray-600 font-bold text-xs dark:bg-gray-600 dark:text-gray-300">
                 {authorInitial}
               </div>
             )}
           </Link>
-          <div className="flex items-center gap-1.5 text-sm text-gray-500">
+          <div className="flex items-center gap-1.5 text-sm text-gray-500 dark:text-gray-400">
             <Link
               href={post.author?.username ? `/u/${post.author.username}` : "#"}
-              className="font-medium text-gray-700 hover:text-gray-900 transition-colors"
+              className="font-medium text-gray-700 hover:text-gray-900 transition-colors dark:text-gray-300 dark:hover:text-gray-100"
             >
               {post.author?.username ?? "Ẩn danh"}
             </Link>
             {formattedDate && (
               <>
-                <span className="text-gray-300">·</span>
+                <span className="text-gray-300 dark:text-gray-600">·</span>
                 <span>{formattedDate}</span>
               </>
             )}
             {updatedLabel && (
               <>
-                <span className="text-gray-300">•</span>
+                <span className="text-gray-300 dark:text-gray-600">•</span>
                 <span>Cập nhật: {updatedLabel}</span>
               </>
             )}
@@ -178,7 +178,7 @@ export default async function PostPage({ params }: PostPageProps) {
       <div className="px-6 pb-6">
         <RichTextWithLightbox
           html={post.content}
-          className="prose prose-sm max-w-none text-gray-700 [&_img]:rounded-lg [&_img]:my-3 [&_img]:max-w-full [&_a]:text-blue-600 [&_a:hover]:text-blue-800 [&_pre]:bg-gray-50 [&_pre]:rounded-lg [&_pre]:p-4 [&_blockquote]:border-l-4 [&_blockquote]:border-gray-300 [&_blockquote]:pl-4 [&_blockquote]:text-gray-600"
+          className="prose prose-sm max-w-none text-gray-700 dark:text-gray-300 [&_img]:rounded-lg [&_img]:my-3 [&_img]:max-w-full [&_a]:text-blue-600 [&_a:hover]:text-blue-800 dark:[&_a]:text-blue-400 dark:[&_a:hover]:text-blue-300 [&_pre]:bg-gray-50 dark:[&_pre]:bg-gray-900 [&_pre]:rounded-lg [&_pre]:p-4 [&_blockquote]:border-l-4 [&_blockquote]:border-gray-300 dark:[&_blockquote]:border-gray-600 [&_blockquote]:pl-4 [&_blockquote]:text-gray-600 dark:[&_blockquote]:text-gray-400"
         />
       </div>
 
@@ -189,7 +189,7 @@ export default async function PostPage({ params }: PostPageProps) {
             <Link
               key={tag.documentId}
               href={`/t/${tag.slug}`}
-              className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-gray-100 text-xs text-gray-500 hover:bg-gray-200 hover:text-gray-700 transition-colors"
+              className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-gray-100 text-xs text-gray-500 hover:bg-gray-200 hover:text-gray-700 transition-colors dark:bg-gray-700 dark:text-gray-400 dark:hover:bg-gray-600 dark:hover:text-gray-200"
             >
               #{tag.name}
             </Link>
@@ -198,13 +198,13 @@ export default async function PostPage({ params }: PostPageProps) {
       )}
 
       {/* 7. Actions */}
-      <div className="px-6 border-t border-gray-100">
+      <div className="px-6 border-t border-gray-100 dark:border-gray-700">
         <PostActions targetType="post" targetDocumentId={post.documentId} />
       </div>
 
       {/* 8. Comments */}
-      <div className="px-6 pb-6 border-t border-gray-100 pt-5">
-        <h2 className="text-sm font-semibold text-gray-700 mb-4">
+      <div className="px-6 pb-6 border-t border-gray-100 dark:border-gray-700 pt-5">
+        <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-4">
           Bình luận{" "}
           {comments.length > 0 && (
             <span className="text-gray-400 font-normal">({comments.length})</span>
