@@ -357,9 +357,18 @@ function toPaginated<T>(
   pageSize = DEFAULT_PAGE_SIZE,
 ): PaginatedResult<T> {
   const data = toArray<T>(payload as ApiResponse<T[] | { data: T[] }>);
+  const pagination = toPagination(payload, page, pageSize, data.length);
+  const normalizedData =
+    data.length > pagination.pageSize
+      ? data.slice(
+          Math.max(0, (pagination.page - 1) * pagination.pageSize),
+          Math.max(0, pagination.page * pagination.pageSize),
+        )
+      : data;
+
   return {
-    data,
-    pagination: toPagination(payload, page, pageSize, data.length),
+    data: normalizedData,
+    pagination,
   };
 }
 

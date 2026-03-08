@@ -104,15 +104,18 @@ export default factories.createCoreService(UID, ({ strapi }) => ({
         : query.filters
       : keywordFilters;
 
-    const [data, total] = await Promise.all([
+    const [rows, total] = await Promise.all([
       strapi.documents(UID).findMany({
         sort,
         filters,
         populate: query?.populate,
-        pagination: { page, pageSize },
+        pagination: { page: 1, pageSize: 1000 },
       }),
       strapi.documents(UID).count({ filters }),
     ]);
+
+    const start = Math.max(0, (page - 1) * pageSize);
+    const data = (rows as any[]).slice(start, start + pageSize);
 
     return {
       data,
